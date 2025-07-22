@@ -183,8 +183,8 @@ def process_excel_file(input_file, output_file=None):
 
         # Skip empty URLs
         if pd.isna(url) or url == '':
-            df.iloc[index, 8] = 'No URL provided'
-            df.iloc[index, 9] = 'No URL provided'
+            df.loc[index, 'PLK Regular price'] = 'No URL provided'
+            df.loc[index, 'PLK Percentage Tiered Prices'] = 'No URL provided'
             continue
 
         # Only process pureleafkratom URLs
