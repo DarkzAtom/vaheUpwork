@@ -6,6 +6,29 @@ import time
 import traceback
 
 
+def get_regular_and_sales_price(soup):
+    """pass here the soup of the page (after choosing the right package amount) and it will locate the regular and the sales price.
+    Sales price could be None"""
+
+    # without sales price => regular ----  <span data-product-price-without-tax="" class="price price--withoutTax price--main">$4.89</span>
+
+    # when sales price present => regular ---- <span data-product-non-sale-price-without-tax="" class="price price--non-sale">$13.49</span>
+
+    check_if_sales_price_is_present = soup.select_one('span.price.price--non-sale')
+
+    regular_price = None
+    sales_price = None
+
+    if check_if_sales_price_is_present:
+        regular_price = soup.select_one('span.price.price--non-sale').text.strip()
+        sales_price = soup.select_one('span.price.price--withoutTax.price--main._hasSale').text.strip()
+    else:
+        regular_price = soup.select_one('span.price.price--withoutTax.price--main').text.strip()
+        sales_price = None
+
+    return {'regularPrice': regular_price, 'salesPrice': sales_price}
+
+
 def extract_tier_quantity(text):
     """Get quantity from 'Buy 10' -> 10"""
     match = re.search(r'Buy (\d+)', text)
