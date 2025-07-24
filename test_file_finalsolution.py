@@ -304,3 +304,57 @@ if __name__ == '__main__':
     print(f"DEBUG DCOSS:  2. soup: {soup.prettify()}")
     out_of_stock = detect_crossed_out_of_stock_size(soup, url)
     print(f"out_of_stock: {out_of_stock}")
+
+
+class PlaywrightScraper:
+    def __init__(self, headless=True, timeout=30000):
+        self.playwright = None
+        self.browser = None
+        self.context = None
+        self.page = None
+        self.headless = headless
+        self.timeout = timeout
+    
+    async def initialize(self):
+        """Initialize Playwright browser"""
+        from playwright.async_api import async_playwright
+        
+        self.playwright = await async_playwright().start()
+        self.browser = await self.playwright.chromium.launch(headless=self.headless)
+        self.context = await self.browser.new_context()
+        self.page = await self.context.new_page()
+        self.page.set_default_timeout(self.timeout)
+    
+    async def navigate_and_get_soup(self, url):
+        """Navigate to URL and return BeautifulSoup object"""
+        await self.page.goto(url)
+        content = await self.page.content()
+        return BeautifulSoup(content, 'html.parser')
+    
+    async def detect_crossed_out_playwright(self, url):
+        """Detect crossed out sizes using Playwright"""
+        await self.page.goto(url)
+        
+        # Wait for the element or timeout
+        try:
+            element = await self.page.wait_for_selector(
+                'label.form-label.variant-button.active.unavailable', 
+                timeout=5000
+            )
+            return element is not None
+        except:
+            return False
+    
+    async def close(self):
+        """Clean up resources"""
+        if self.browser:
+            await self.browser.close()
+        if self.playwright:
+            await self.playwright.stop()
+    
+    async def __aenter__(self):
+        await self.initialize()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
