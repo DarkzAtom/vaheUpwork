@@ -53,6 +53,20 @@ def extract_tier_quantity(text):
     return int(match.group(1)) if match else None
 
 
+def detect_crossed_out_of_stock_size(soup, url):     #url is for debugging purposes
+    """Detect if the size is crossed out and of stock"""
+    try:
+        crossed_out_size = soup.select_one('label.form-label.variant-button.active.unavailable')
+        print(f"DEBUG DCOSS:  1. crossed_out_size: {crossed_out_size}")
+        if crossed_out_size:
+            return True
+        else:
+            return False
+    except Exception as e:
+        print(f"error: failed to detect crossed out of stock size in the url {url}, error stacktrace: {e}")
+        return False
+
+
 def extract_discount_info(text):
     # old version where it's allowed for float numbers
     # """Get discount from '(25%)' or '(3.25%)' -> '25%' or '3.25%'"""
@@ -270,13 +284,23 @@ def test_single_url():
     print(f"Tier String: {result.get('tier_string')}")
 
 
-if __name__ == '__main__':
-    # Uncomment to test single URL
-    # test_single_url()
+# if __name__ == '__main__':
+#     # Uncomment to test single URL
+#     # test_single_url()
 
-    # Uncomment to run full program
-    input_file = "input_copy.xlsx"
-    process_excel_file(input_file)
+#     # Uncomment to run full program
+#     input_file = "input_copy.xlsx"
+#     process_excel_file(input_file)
 
 
 # link with tier
+
+
+# TEST IF NAME MAIN to test out single functions (comment out the one above and uncomment the one below)
+if __name__ == '__main__':
+    url = 'https://pureleafkratom.com/products/lucky-7-7-oh-chewable-tablets-natural-18mg-per-tablet.html'
+    response = requests.get(url, timeout=10)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    print(f"DEBUG DCOSS:  2. soup: {soup.prettify()}")
+    out_of_stock = detect_crossed_out_of_stock_size(soup, url)
+    print(f"out_of_stock: {out_of_stock}")
