@@ -4,9 +4,10 @@ import re
 import pandas as pd
 import time
 import traceback
+import math
 
 
-def get_regular_and_sales_price(soup):
+def get_regular_and_sales_price(soup, url):   # url only for debugging purposes
     """pass here the soup of the page (after choosing the right package amount) and it will locate the regular and the sales price.
     Sales price could be None"""
 
@@ -14,19 +15,36 @@ def get_regular_and_sales_price(soup):
 
     # when sales price present => regular ---- <span data-product-non-sale-price-without-tax="" class="price price--non-sale">$13.49</span>
 
-    check_if_sales_price_is_present = soup.select_one('span.price.price--non-sale')
+    try:
+        check_if_sales_price_is_present = soup.select_one('span.price.price--non-sale').text.strip()
 
-    regular_price = None
-    sales_price = None
+        print(f"DEBUG GRSP:  1. checkifsalepresent: {check_if_sales_price_is_present}")
 
-    if check_if_sales_price_is_present:
-        regular_price = soup.select_one('span.price.price--non-sale').text.strip()
-        sales_price = soup.select_one('span.price.price--withoutTax.price--main._hasSale').text.strip()
-    else:
-        regular_price = soup.select_one('span.price.price--withoutTax.price--main').text.strip()
+        regular_price = None
         sales_price = None
 
-    return {'regularPrice': regular_price, 'salesPrice': sales_price}
+        if check_if_sales_price_is_present:
+            regular_price = soup.select_one('span.price.price--non-sale').text.strip()
+            print(f"DEBUG GRSP:  2. {regular_price}")
+            sales_price = soup.select_one('span.price.price--withoutTax.price--main._hasSale').text.strip()
+            print(f"DEBUG GRSP:  3. {sales_price}")
+        else:
+            regular_price = soup.select_one('span.price.price--withoutTax.price--main').text.strip()
+            print(f"DEBUG GRSP:  4.  {regular_price}")
+            sales_price = None
+            print(f"DEBUG GRSP:  5.  {sales_price}")
+
+        if regular_price:
+            regular_price = extract_price_amount(regular_price)
+        
+        if sales_price:
+            sales_price = extract_price_amount(sales_price)    
+
+        return regular_price, sales_price
+    except Exception as e:
+        print(f"error: can't get regular and sales price from {url}, error stacktrace: {e}")
+        regular_price, sales_price = None, None
+        return regular_price, sales_price
 
 
 def extract_tier_quantity(text):
@@ -36,12 +54,21 @@ def extract_tier_quantity(text):
 
 
 def extract_discount_info(text):
-    """Get discount from '(25%)' -> '25%', True OR regular price -> price, False"""
-    discount_match = re.search(r'\((\d+)%\)', text)
+    # old version where it's allowed for float numbers
+    # """Get discount from '(25%)' or '(3.25%)' -> '25%' or '3.25%'"""
+    # discount_match = re.search(r'\((\d+\.?\d*)%\)', text)  # Changed this line
+    # if discount_match:
+    #     return str(float(discount_match.group(1))) + '%'  # Handle decimals properly
+    # else:
+    #     return None
+
+    """Version 2, where the values are floored to the nearest integer
+    Get discount from '(25%)' or '(3.25%)' -> '25%' or '3.25%'"""
+    discount_match = re.search(r'\((\d+\.?\d*)%\)', text)  # Changed this line
     if discount_match:
-        return str(int(discount_match.group(1))) + '%', True
-    regular_price = text.strip()
-    return regular_price, False
+        return str(math.floor(float(discount_match.group(1)))) + '%'  # Handle decimals properly
+    else:
+        return None
 
 
 def extract_quantity_from_name(name):
@@ -55,93 +82,68 @@ def extract_quantity_from_name(name):
 
 
 def extract_price_amount(text):
-    """Get '25.99' from '$25.99'"""
-    match = re.search(r'\$(\d+\.?\d*)', text)
+    """Get '21.49' from '$21.49' or '$21.49 - $298.99' (takes first price)"""
+    if not text:
+        return None
+    
+    first_price = text.split('-')[0].strip()
+    
+    # extract number from first price
+    match = re.search(r'\$(\d+\.?\d*)', first_price)
     return match.group(1) if match else None
 
 
 def scrape_no_tiers(soup, url):
     """Handle products with no tier pricing"""
-    try:
-        price_elem = soup.select_one("span.price.price--withoutTax.price--main")
-        if not price_elem:
-            return {"regular_price": None, "tier_string": "No price found", "non_sale_price": None}
 
-        raw_price = price_elem.text.strip()
+    regular_price, sales_price = get_regular_and_sales_price(soup, url)   # passing url only in debugging purposes
 
-        # Check for non-sale price
-        non_sale_price = None
-        if soup.select_one('span.price.price--non-sale'):
-            print('Found non-sale price available')
-            non_sale_price = soup.select_one('span.price.price--non-sale').text.strip()
-            print(f'Non-sale price: {non_sale_price}')
-
-        # Handle price ranges (take first price)
-        try:
-            regular_price = raw_price.split('-')[0].strip()
-        except Exception as e:
-            print(f'Price parsing error at {url}')
-            traceback.print_exc()
-            regular_price = raw_price
-
-        return {
-            "regular_price": regular_price,
-            "tier_string": "No tiers present",
-            "non_sale_price": non_sale_price
-        }
-    except Exception as e:
-        print(f'Error in scrape_no_tiers: {e}')
-        return {"regular_price": None, "tier_string": f"Error: {e}", "non_sale_price": None}
+    return {
+        "regular_price": regular_price,
+        "sales_price": sales_price,
+        "tier_string": "No tiers present"
+    }
 
 
 def build_tier_list(soup):
     """Extract all tier data and return list of {quantity, discount}"""
     tiers = soup.select('div.tier-button')
+    print(f"🔍 DEBUG: Found {len(tiers)} tier buttons")
+    
     tier_list = []
-    regular_price = None
-
-    for tier in tiers:
+    
+    for i, tier in enumerate(tiers):
+        print(f"🔍 DEBUG: Processing tier {i+1}")
+        
         quantity_elem = tier.select_one("div.quantity-range")
         discount_elem = tier.select_one("div.discount-info")
+        
+        print(f"🔍 DEBUG: quantity_elem found: {quantity_elem is not None}")
+        print(f"🔍 DEBUG: discount_elem found: {discount_elem is not None}")
+        
+        if quantity_elem:
+            print(f"🔍 DEBUG: quantity_elem text: '{quantity_elem.text.strip()}'")
+        if discount_elem:
+            print(f"🔍 DEBUG: discount_elem text: '{discount_elem.text.strip()}'")
 
         if not (quantity_elem and discount_elem):
+            print(f"❌ DEBUG: Skipping tier {i+1} - missing elements")
             continue
 
         quantity = extract_tier_quantity(quantity_elem.text)
-        discount, is_discount = extract_discount_info(discount_elem.text)
-
-        if not is_discount:
-            regular_price = discount  # Store regular price for later
-            continue
+        discount = extract_discount_info(discount_elem.text)
+        
+        print(f"🔍 DEBUG: extracted quantity: {quantity}")
+        print(f"🔍 DEBUG: extracted discount: {discount}")
 
         if quantity and discount:
             tier_list.append({'quantity': quantity, 'discount': discount})
+            print(f"✅ DEBUG: Added tier: {quantity}:{discount}")
+        else:
+            print(f"❌ DEBUG: Skipping tier {i+1} - invalid quantity/discount")
 
-    return tier_list, regular_price
-
-
-def get_price_for_quantity(soup, target_quantity):
-    """Get specific price for a target quantity"""
-    if not target_quantity:
-        return None
-
-    print(f'Looking for quantity: {target_quantity}')
-    try:
-        tier_button = soup.select_one(f'div.tier-button[data-min="{target_quantity}"]')
-        if not tier_button:
-            return None
-
-        discount_elem = tier_button.select_one('div.discount-info')
-        if not discount_elem:
-            return None
-
-        price_text = discount_elem.text
-        print(f'Found price text: {price_text}')
-
-        return extract_price_amount(price_text)
-    except Exception as e:
-        print(f'Error finding price for quantity {target_quantity}: {e}')
-        return None
+    print(f"🔍 DEBUG: Final tier_list: {tier_list}")
+    return tier_list
 
 
 def scrape_tier_data(url, quantity_from_excel=None):
@@ -157,7 +159,9 @@ def scrape_tier_data(url, quantity_from_excel=None):
             return scrape_no_tiers(soup, url)
 
         # Get tier data
-        tier_list, stored_regular_price = build_tier_list(soup)
+        tier_list = build_tier_list(soup)
+
+        print(f"DEBUG GRSP:  6. tier_list = {tier_list}")
 
         # Build tier string
         tier_string = None
@@ -165,21 +169,26 @@ def scrape_tier_data(url, quantity_from_excel=None):
             tier_string = ",".join([f"{t['quantity']}:{t['discount'].replace('%', '')}" for t in tier_list])
 
         # Get price for specific quantity if needed
-        regular_price = stored_regular_price
-        if quantity_from_excel:
-            specific_price = get_price_for_quantity(soup, quantity_from_excel)
-            if specific_price:
-                regular_price = specific_price
+        regular_price, sales_price = get_regular_and_sales_price(soup, url)  # passing url only for debugging purposes
 
         return {
             'regular_price': regular_price,
+            'sales_price': sales_price,
             'tier_string': tier_string
         }
 
     except requests.RequestException as e:
-        return f"Request error: {str(e)}"
+        return {
+            'regular_price': None,
+            'sales_price': None, 
+            'tier_string': f"Request error: {str(e)}"
+        }
     except Exception as e:
-        return f"Parsing error: {str(e)}"
+        return {
+            'regular_price': None,
+            'sales_price': None,
+            'tier_string': f"Parsing error: {str(e)}"
+        }
 
 
 def process_excel_file(input_file, output_file=None):
@@ -219,11 +228,19 @@ def process_excel_file(input_file, output_file=None):
         # Scrape the data
         scraped_data = scrape_tier_data(url, quantity)
 
+        print(f'ANCHOR DEBUG: scraped_data = {scraped_data}')
+
         # Update Excel columns
         try:
-            if scraped_data.get('regular_price'):
-                clean_price = scraped_data['regular_price'].replace('$', '')
-                df.loc[index, "PLK Regular price"] = clean_price
+            if scraped_data.get('sales_price') and scraped_data.get('regular_price'):
+                clean_sales_price = scraped_data['sales_price'].replace('$', '')
+                clean_regular_price = scraped_data['regular_price'].replace('$', '')
+                df.loc[index, "PLK Regular price"] = clean_sales_price
+                df.loc[index, "PLK Sale price"] = clean_regular_price
+
+            elif scraped_data.get('regular_price'):
+                clean_regular_price = scraped_data['regular_price'].replace('$', '')
+                df.loc[index, "PLK Regular price"] = clean_regular_price
 
             df.loc[index, "PLK Percentage Tiered Prices"] = scraped_data.get('tier_string')
 
@@ -260,3 +277,6 @@ if __name__ == '__main__':
     # Uncomment to run full program
     input_file = "input_copy.xlsx"
     process_excel_file(input_file)
+
+
+# link with tier
